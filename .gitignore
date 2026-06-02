@@ -1,0 +1,5 @@
+# Add appropriate ignorables for your project
+/build/
+/build/minimal.pdf
+/ext/libBeresta/
+/ext/libberesta/
