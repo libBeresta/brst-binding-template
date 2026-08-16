@@ -85,121 +85,187 @@
 
       (dolist (sf +skip-functions+)
 	(remhash sf *functions-lsp*))
-      
+
       (let ((function-list "")
-	    (janet-functions ""))
-	(setf function-list 
-	      (with-output-to-string (output)
-		(setf janet-functions
-		      (with-output-to-string (jns)
-			;; Функция печати
-			(flet ((wr (fmt &rest values)
-				 (apply #'format (cons output (cons fmt values))))
-			       (jr (fmt &rest values)
-				 (apply #'format (cons jns (cons fmt values)))))
-			  ;; Эта переменная нужна для того, чтобы отслеживать смену файла
-			  (let ((function-header ""))
-			    ;; Сортируем функции по файлу и перебираем функции
-			    (dolist (f (sort
-					(alexandria:hash-table-alist *functions-lsp*)
-					#'string-lessp :key #'cadr))
-			      ;; Для отдельной функции получаем имя, файл, параметры и тип
-			      (let* ((function (car f))
-				     (filename (cadr f))
-				     (data (cddr f))
-				     (params (getf data :params))
-				     (result (getf data :result))
-				     (en (str:replace-all "
+	    (janet-functions "")
+	    (janet-enums "")
+	    (page-sizes ""))
+
+	(setf
+
+	 page-sizes
+	 (with-output-to-string (output)
+	   (flet ((wr (fmt &rest values)
+		    (apply #'format (cons output (cons fmt values)))))
+
+	     (let ((page-size-header ""))
+	       (wr "  // page_sizes.lsp~%")
+	       (dolist (s *sizes-lsp*)
+		 (let* ((skip    (getf s :skip))
+			(id      (getf s :id))
+			(caption (getf s :caption))
+			(origin  (getf s :origin))
+			(w       (getf s :width))
+			(h       (getf s :height))
+			(comment (format nil "~A ~A (~Amm x ~Amm)" origin caption w h))
+			(skip-mark (if skip "// skip: " ""))
+			(under (str:downcase (under (str:concat "page-size-" (under id))))))
+
+		   (when (not (string-equal origin page-size-header))
+		     (wr "  // ~A~%" origin)
+		     (setf page-size-header origin))
+		   (wr "  ~Ajanet_def(env, \"~A\", janet_wrap_integer(BRST_PAGE_SIZE_~A), \"~A\");~%" skip-mark under id comment))))))
+
+	 janet-enums
+	 (with-output-to-string (output)
+	   (flet ((wr (fmt &rest values)
+		    (apply #'format (cons output (cons fmt values)))))
+	     (let ((enum-header ""))
+       	       (dolist (e (sort
+			   (alexandria:hash-table-alist *enums-lsp*)
+			   #'string-lessp :key #'cadr))
+
+		 (let* ((enum (car e))
+			(filename (cadr e))
+			(data (cddr e))
+			(elements (getf data :elements)))
+
+		   (when (not (string-equal filename enum-header))
+		     (wr "  // ~A~%" filename)
+		     (setf enum-header filename))
+
+		   (dolist (em elements)
+		     (let ((under (str:downcase (under (getf em :element))))
+			   (em-name (getf em :element))
+			   (en (str:replace-all "
 "
-							  "\\n" (or (getf data :en) "")))
-				     (return-type (getf result :type))
-				     (under (str:downcase (under function)))
-				     (param-names (if (zerop (length params))
-						      ""
-						      (str:join ", " (mapcar #'(lambda (x) (getf x :name)) params))))
-				     (param-names1 (if (zerop (length params))
-						       ""
-						       (str:concat " " (str:join " " (mapcar #'(lambda (x) (getf x :name)) params))))))
+						"\\n" (or (getf em :en) ""))))
+		       (wr "  janet_def(env, \"~A\", janet_wrap_integer(BRST_~A), \"~A\");~%" under em-name en))))))))
 
-				;; Смена имени файла
-				(when (not (string-equal filename function-header))
-				  (wr "// ~A~%" filename)
-				  (jr "// ~A~%" filename)
-				  (setf function-header filename))
+	 function-list
+	 (with-output-to-string (output)
+	   (setf
+	    janet-functions
+	    (with-output-to-string (jns)
+	      ;; Функция печати
+	      (flet ((wr (fmt &rest values)
+		       (apply #'format (cons output (cons fmt values))))
+		     (jr (fmt &rest values)
+		       (apply #'format (cons jns (cons fmt values)))))
+		;; Эта переменная нужна для того, чтобы отслеживать смену файла
+		(let ((function-header ""))
+		  ;; Сортируем функции по файлу и перебираем функции
+		  (dolist (f (sort
+			      (alexandria:hash-table-alist *functions-lsp*)
+			      #'string-lessp :key #'cadr))
+		    ;; Для отдельной функции получаем имя, файл, параметры и тип
+		    (let* ((function (car f))
+			   (filename (cadr f))
+			   (data (cddr f))
+			   (params (getf data :params))
+			   (result (getf data :result))
+			   (en (str:replace-all "
+"
+						"\\n" (or (getf data :en) "")))
+			   (return-type (getf result :type))
+			   (under (str:downcase (under function)))
+			   (param-names (if (zerop (length params))
+					    ""
+					    (str:join ", " (mapcar #'(lambda (x) (getf x :name)) params))))
+			   (param-names1 (if (zerop (length params))
+					     ""
+					     (str:concat " " (str:join " " (mapcar #'(lambda (x) (getf x :name)) params))))))
 
-				(jr "  {\"~A\", br_~A, \"(brst/~A~A)\\n\\n~A\"},~%" under function under param-names1 en) 
+		      ;; Смена имени файла
+		      (when (not (string-equal filename function-header))
+			(wr "// ~A~%" filename)
+			(jr "  // ~A~%" filename)
+			(setf function-header filename))
 
-				;; Шапка функции
-				(wr "static Janet br_~A(int32_t argc, Janet *argv) {~%" function)
+		      (jr "  {\"~A\", br_~A, \"(brst/~A~A)\\n\\n~A\"},~%" under function under param-names1 en)
 
-				;; Проверка арности
-				(if (zerop (length params))
-				    (wr "  (void) argv; janet_fixarity(argc, 0);~%")
-				    (wr "  janet_fixarity(argc, ~A);~%" (length params)))
+		      ;; Шапка функции
+		      (wr "static Janet br_~A(int32_t argc, Janet *argv) {~%" function)
 
-				;; Расстановка параметров
-				(let ((i 0))
-				  (dolist (p params)
-				    (let ((name (getf p :name))
-					  (type (getf p :type)))
-				      ;; Получаем getter'ы для типов параметров
-				      (let* ((type-cons (getf +janet-types+ (intern (string-upcase type) 'keyword)))
-					     (def  (gethash type *defs-lsp*))
-					     (ptr  (gethash type *pointers-lsp*))
-					     (enum (gethash type *enums-lsp*))
-					     (param-type (if type-cons
-							     (car type-cons)
-							     ;; Подменяем перечисления на integer,
-							     ;; указатели и определения на pointer
-							     (cond
-							       (def "pointer")
-							       (ptr "pointer")
-							       (enum "integer")
-							       (t type)))))
-					(if (string= "CSTR" type)
-					    (wr "  BRST_CSTR ~A = (BRST_CSTR)janet_getstring(argv, ~D);~%" name i)
-					    (wr "  BRST_~A ~A = (BRST_~A)janet_get_~A(argv, ~D);~%"
-						type
-						name
-						type
-						param-type
-						i)))
-				      (incf i))))
+		      ;; Проверка арности
+		      (if (zerop (length params))
+			  (wr "  (void) argv; janet_fixarity(argc, 0);~%")
+			  (wr "  janet_fixarity(argc, ~A);~%" (length params)))
 
-				;; Подготовка результата
-				(let* ((type-cons (getf +janet-types+ (intern (string-upcase return-type) 'keyword)))
-				       (def       (gethash return-type *defs-lsp*))
-				       (ptr       (gethash return-type *pointers-lsp*))
-				       (enum      (gethash return-type *enums-lsp*))
-				       (ret-type  (if type-cons
-						      (cdr type-cons)
-						      ;; Подменяем перечисления на integer,
-						      ;; указатели и определения на pointer
-						      (cond
-							(def "pointer")
-							(ptr "pointer")
-							(enum "integer")
-							(t return-type)))))
-				  (if (string= return-type "void")
-				      (progn
-					(wr "  BRST_~A(~A);~%" function param-names)
-					(wr "  return janet_wrap_nil();~%"))
-				      (if (string= "CSTR" return-type)
-					  (progn
-					    (wr "  BRST_CSTR ret = BRST_~A(~A);~%" function param-names)
-					    (wr "  return janet_cstringv(ret);"))
-					  (progn
-					    (wr "  BRST_~A ret = BRST_~A(~A);~%" return-type function param-names)
-					    (wr "  return janet_wrap_~A(ret);~%" ret-type)))))
+		      ;; Расстановка параметров
+		      (let ((i 0))
+			(dolist (p params)
+			  (let ((name (getf p :name))
+				(type (getf p :type)))
+			    ;; Получаем getter'ы для типов параметров
+			    (let* ((type-cons (getf +janet-types+ (intern (string-upcase type) 'keyword)))
+				   (def  (gethash type *defs-lsp*))
+				   (ptr  (gethash type *pointers-lsp*))
+				   (enum (gethash type *enums-lsp*))
+				   (param-type (if type-cons
+						   (car type-cons)
+						   ;; Подменяем перечисления на integer,
+						   ;; указатели и определения на pointer
+						   (cond
+						     (def "pointer")
+						     (ptr "pointer")
+						     (enum "integer")
+						     (t type)))))
+			      (if (string= "CSTR" type)
+				  (wr "  BRST_CSTR ~A = (BRST_CSTR)janet_getstring(argv, ~D);~%" name i)
+				  (wr "  BRST_~A ~A = (BRST_~A)janet_get_~A(argv, ~D);~%"
+				      type
+				      name
+				      type
+				      param-type
+				      i)))
+			    (incf i))))
 
-				(wr "}~%~%")
-			
-				))))))))
-	(print function-list)
-	(print janet-functions)
-	(alexandria:write-string-into-file function-list "fns.c")
-	(alexandria:write-string-into-file janet-functions "jns.c")
-	;;(print (alexandria:hash-table-keys *enums-lsp*))
-	;;(print (alexandria:hash-table-keys *pointers-lsp*))
-	;;(print (alexandria:hash-table-keys *defs-lsp*))
+		      ;; Подготовка результата
+		      (let* ((type-cons (getf +janet-types+ (intern (string-upcase return-type) 'keyword)))
+			     (def       (gethash return-type *defs-lsp*))
+			     (ptr       (gethash return-type *pointers-lsp*))
+			     (enum      (gethash return-type *enums-lsp*))
+			     (ret-type  (if type-cons
+					    (cdr type-cons)
+					    ;; Подменяем перечисления на integer,
+					    ;; указатели и определения на pointer
+					    (cond
+					      (def "pointer")
+					      (ptr "pointer")
+					      (enum "integer")
+					      (t return-type)))))
+			(if (string= return-type "void")
+			    (progn
+			      (wr "  BRST_~A(~A);~%" function param-names)
+			      (wr "  return janet_wrap_nil();~%"))
+			    (if (string= "CSTR" return-type)
+				(progn
+				  (wr "  BRST_CSTR ret = BRST_~A(~A);~%" function param-names)
+				  (wr "  return janet_cstringv(ret);"))
+				(progn
+				  (wr "  BRST_~A ret = BRST_~A(~A);~%" return-type function param-names)
+				  (wr "  return janet_wrap_~A(ret);~%" ret-type)))))
+
+		      (wr "}~%~%")))))))))
+
+	(alexandria:write-string-into-file
+	 (with-output-to-string (res)
+	   (flet ((wr (fmt &rest values)
+		    (apply #'format (cons res (cons fmt values)))))
+	     (wr "#include <janet.h>~%")
+	     (wr "#include <brst.h>~%~%")
+
+	     (princ function-list res)
+
+	     (wr "static const JanetReg cfuns[] = {~%")
+	     (princ janet-functions res)
+	     (wr "~%  {NULL, NULL, NULL}~%")
+	     (wr "};~%")
+	     (wr "~%JANET_MODULE_ENTRY(JanetTable *env) {~%")
+	     (princ janet-enums res)
+	     (princ page-sizes res)
+	     (wr "~%  janet_cfuns(env, \"brst\", cfuns);~%")
+	     (wr "}")))
+	 "janet.c")
 	))))
