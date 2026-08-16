@@ -10,7 +10,9 @@
 (defparameter +skip-functions+
   ;; Набор функций, которые предстоит переработать
   ;; для исключения наличия параметров-приемников.
-  '("Page_MeasureText"
+  '("Doc_New_Ex"
+    "Doc_New"
+    "Page_MeasureText"
     "Page_CurrentTextPos2"
     "Page_TextRect"
     "Doc_Image_Raw_LoadFromMemory"
@@ -21,10 +23,11 @@
 
 (defparameter +janet-types+
   ;; Тип в gen | тип в распаковке | тип в упаковке
-  '(:STATUS        ("uinteger"   .  "number")
-    :CID           ("uinteger16" .  "number")
-    :UNICODE       ("uinteger16" .  "number")
-    :BYTE          ("uinteger8"  .  "number")
+  '(:STATUS        ("uinteger"   . "integer")
+    :CID           ("uinteger16" . "integer")
+    :UNICODE       ("uinteger16" . "integer")
+    :BYTE          ("uinteger8"  . "integer")
+    :UINT          ("uinteger"   . "integer")
     :INT8          ("integer8"   . "integer")
     :UINT8         ("uinteger8"  . "integer")
     :INT16         ("integer16"  . "integer")
@@ -35,11 +38,12 @@
     :REAL          ("float"      .  "number")
     :DOUBLE        ("number"     .  "number")
     :BOOL          ("integer"    . "integer")
-    :RAW-POINTER   ("pointer"    . "pointer")
-    :DASH-PATTERN  ("pointer"    . "pointer")
-    :ERROR-HANDLER ("pointer"    . "pointer")    
-    :ALLOC-FUNC    ("pointer"    . "pointer")    
-    :FREE-FUNC     ("pointer"    . "pointer")))
+    :PAGESIZES     ("integer"    . "integer")
+    :RAW_POINTER   ("pointer"    . "pointer")
+    :DASH_PATTERN  ("pointer"    . "pointer")
+    :ERROR_HANDLER ("pointer"    . "pointer")
+    :ALLOC_FUNC    ("pointer"    . "pointer")
+    :FREE_FUNC     ("pointer"    . "pointer")))
 
 
 ;; Генератор привязки Janet
@@ -82,80 +86,120 @@
       (dolist (sf +skip-functions+)
 	(remhash sf *functions-lsp*))
       
-      (let ((function-list ""))
+      (let ((function-list "")
+	    (janet-functions ""))
 	(setf function-list 
 	      (with-output-to-string (output)
-		;; Функция печати
-		(flet ((wr (fmt &rest values)
-			 (apply #'format (cons output (cons fmt values)))))
-		  ;; Эта переменная нужна для того, чтобы отслеживать смену файла
-		  (let ((function-header ""))
-		    ;; Сортируем функции по файлу и перебираем функции
-		    (dolist (f (sort
-				(alexandria:hash-table-alist *functions-lsp*)
-				#'string-lessp :key #'cadr))
-		      ;; Для отдельной функции получаем имя, файл, параметры и тип
-		      (let* ((function (car f))
-			     (filename (cadr f))
-			     (data (cddr f))
-			     (params (getf data :params))
-			     (result (getf data :result))
-			     (return-type (getf result :type))
-			     (param-names (if (zerop (length params))
-					      ""
-					      (str:join ", " (mapcar #'(lambda (x) (getf x :name)) params)))))
+		(setf janet-functions
+		      (with-output-to-string (jns)
+			;; Функция печати
+			(flet ((wr (fmt &rest values)
+				 (apply #'format (cons output (cons fmt values))))
+			       (jr (fmt &rest values)
+				 (apply #'format (cons jns (cons fmt values)))))
+			  ;; Эта переменная нужна для того, чтобы отслеживать смену файла
+			  (let ((function-header ""))
+			    ;; Сортируем функции по файлу и перебираем функции
+			    (dolist (f (sort
+					(alexandria:hash-table-alist *functions-lsp*)
+					#'string-lessp :key #'cadr))
+			      ;; Для отдельной функции получаем имя, файл, параметры и тип
+			      (let* ((function (car f))
+				     (filename (cadr f))
+				     (data (cddr f))
+				     (params (getf data :params))
+				     (result (getf data :result))
+				     (en (str:replace-all "
+"
+							  "\\n" (or (getf data :en) "")))
+				     (return-type (getf result :type))
+				     (under (str:downcase (under function)))
+				     (param-names (if (zerop (length params))
+						      ""
+						      (str:join ", " (mapcar #'(lambda (x) (getf x :name)) params))))
+				     (param-names1 (if (zerop (length params))
+						       ""
+						       (str:concat " " (str:join " " (mapcar #'(lambda (x) (getf x :name)) params))))))
 
-			;; Смена имени файла
-			(when (not (string-equal filename function-header))
-			  (wr "// ~A~%" filename)
-			  (setf function-header filename))
+				;; Смена имени файла
+				(when (not (string-equal filename function-header))
+				  (wr "// ~A~%" filename)
+				  (jr "// ~A~%" filename)
+				  (setf function-header filename))
 
-			;; Шапка функции
-			(wr "static Janet br_~A(int32_t argc, Janet *argv) {~%" function)
+				(jr "  {\"~A\", br_~A, \"(brst/~A~A)\\n\\n~A\"},~%" under function under param-names1 en) 
 
-			;; Проверка арности
-			(if (zerop (length params))
-			    (wr "  (void) argv; janet_fixarity(argc, 0);~%")
-			    (wr "  janet_fixarity(argc, ~A);~%" (length params)))
+				;; Шапка функции
+				(wr "static Janet br_~A(int32_t argc, Janet *argv) {~%" function)
 
-			;; Расстановка параметров
-			(let ((i 0))
-			  (dolist (p params)
-			    (let ((name (getf p :name))
-				  (type (getf p :type)))
-			      ;; Получаем getter'ы для 
-			      (let ((type-cons (getf +janet-types+ (intern (string-upcase type) 'keyword)))
-				    (def  (gethash type *defs-lsp*))
-				    (ptr  (gethash type *pointers-lsp*))
-				    (enum (gethash type *enums-lsp*)))
-				(wr "  ~A ~A = (~A)janet_get_~A(argv, ~D);~%"
-				    type
-				    name
-				    type
-				    (if type-cons
-					(car type-cons)
-					;; Подменяем перечисления на integer,
-					;; указатели и определения на pointer
-					(cond
-					  (def "pointer")
-					  (ptr "pointer")
-					  (enum "integer")
-					  (t type)))
-				    i))
-			      (incf i))))
+				;; Проверка арности
+				(if (zerop (length params))
+				    (wr "  (void) argv; janet_fixarity(argc, 0);~%")
+				    (wr "  janet_fixarity(argc, ~A);~%" (length params)))
+
+				;; Расстановка параметров
+				(let ((i 0))
+				  (dolist (p params)
+				    (let ((name (getf p :name))
+					  (type (getf p :type)))
+				      ;; Получаем getter'ы для типов параметров
+				      (let* ((type-cons (getf +janet-types+ (intern (string-upcase type) 'keyword)))
+					     (def  (gethash type *defs-lsp*))
+					     (ptr  (gethash type *pointers-lsp*))
+					     (enum (gethash type *enums-lsp*))
+					     (param-type (if type-cons
+							     (car type-cons)
+							     ;; Подменяем перечисления на integer,
+							     ;; указатели и определения на pointer
+							     (cond
+							       (def "pointer")
+							       (ptr "pointer")
+							       (enum "integer")
+							       (t type)))))
+					(if (string= "CSTR" type)
+					    (wr "  BRST_CSTR ~A = (BRST_CSTR)janet_getstring(argv, ~D);~%" name i)
+					    (wr "  BRST_~A ~A = (BRST_~A)janet_get_~A(argv, ~D);~%"
+						type
+						name
+						type
+						param-type
+						i)))
+				      (incf i))))
+
+				;; Подготовка результата
+				(let* ((type-cons (getf +janet-types+ (intern (string-upcase return-type) 'keyword)))
+				       (def       (gethash return-type *defs-lsp*))
+				       (ptr       (gethash return-type *pointers-lsp*))
+				       (enum      (gethash return-type *enums-lsp*))
+				       (ret-type  (if type-cons
+						      (cdr type-cons)
+						      ;; Подменяем перечисления на integer,
+						      ;; указатели и определения на pointer
+						      (cond
+							(def "pointer")
+							(ptr "pointer")
+							(enum "integer")
+							(t return-type)))))
+				  (if (string= return-type "void")
+				      (progn
+					(wr "  BRST_~A(~A);~%" function param-names)
+					(wr "  return janet_wrap_nil();~%"))
+				      (if (string= "CSTR" return-type)
+					  (progn
+					    (wr "  BRST_CSTR ret = BRST_~A(~A);~%" function param-names)
+					    (wr "  return janet_cstringv(ret);"))
+					  (progn
+					    (wr "  BRST_~A ret = BRST_~A(~A);~%" return-type function param-names)
+					    (wr "  return janet_wrap_~A(ret);~%" ret-type)))))
+
+				(wr "}~%~%")
 			
-			;; Подготовка результата
-			(if (string= return-type "void")
-			    (wr "  return janet_wrap_nil();~%")
-			    (progn
-			      (wr "  ~A ret = BRST_~A(~A);~%" return-type function param-names)
-			      (wr "  return janet_wrap_~A(ret);~%" return-type)))
-			
-			(wr "}~%~%")
-
-			))))))
+				))))))))
 	(print function-list)
-	(print (alexandria:hash-table-keys *enums-lsp*))
-	(print (alexandria:hash-table-keys *pointers-lsp*))
-	(print (alexandria:hash-table-keys *defs-lsp*))
+	(print janet-functions)
+	(alexandria:write-string-into-file function-list "fns.c")
+	(alexandria:write-string-into-file janet-functions "jns.c")
+	;;(print (alexandria:hash-table-keys *enums-lsp*))
+	;;(print (alexandria:hash-table-keys *pointers-lsp*))
+	;;(print (alexandria:hash-table-keys *defs-lsp*))
 	))))
