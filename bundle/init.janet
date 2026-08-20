@@ -19,7 +19,7 @@
   (setdyn :build-type :release))
 
 # Многословный режим
-(def- is-verbose :flycheck (os/getenv "VERBOSE"))
+(def- is-verbose (os/getenv "VERBOSE"))
 
 # Строка _build/release или _build/develop
 (def- static-path (string "_build/" (cc/build-type)))
@@ -86,18 +86,20 @@
          (errorf "Something wrong with CMake build. `%s` has wrong format [(A=B) expected]." prefix))
        (1 line-s))))
 
-(var cflags (case (os/which)
-               :linux @[]))
+(var cflags @[])
 
-(def- lflags (case (os/which)
-               :linux @[]
-               nil))
+(var lflags @[])
 
+# Запускаем CMake, чтобы у нас был доступ к CMakeCache.txt
 (build-brst-fn)
 
+# Получаем данные о расположении target
 (let [source (cmake-cache-line "libbrst_SOURCE_DIR")
       bin    (cmake-cache-line "libbrst_BINARY_DIR")]
-  (set cflags @[(string "-I" (path/join source "include")) (string "-I" (path/join bin "include"))]))
+  (set cflags @[(string "-I" (path/join source "include")) (string "-I" (path/join bin "include"))])
+  (set lflags (case (os/which)
+		:linux @[(path/join bin "src" (jnt/gen-static-libname bundle-name)) "-lpng"]
+		nil)))
 
 (declare-source
   :source [bundle-name])
@@ -108,100 +110,107 @@
   :cflags cflags
   :lflags lflags)
 
-#(defn- repack-brst
-#  []
-#  (case (os/which)
-#    :linux (do
-#
-#             # brst___brst
-#             (def- lib-name (string bundle-name "___" bundle-name))
-#
-#             # brst___brst.a
-#             (def- static-arch (string lib-name ".a"))
-#
-#             # brst___brst.meta.janet
-#             (def- meta-name (string lib-name ".meta.janet"))
-#
-#             # brst.o
-#             (def- static-o (string bundle-name ".o"))
-#
-#             # libbrst.a
-#             (def- libfinecurve-arch (jnt/gen-static-libname bundle-name))
-#
-#             # _build/develop/brst___brst.a
-#             (def- static-lib
-#               (path/join static-path static-arch))
-#
-#             # _build/brst-build/libbrst.a
-#             (def- static-brst-lib
-#               (path/join brst-build-dir libbrst-arch))
-#
-#             # _build/release/brst.o
-#             (def- static-final-o
-#               (path/join static-path static-o))
-#
-#             # _build/release/brst___brst.meta.janet
-#             (def- static-meta-name
-#               (path/join static-path meta-name))
-#
-#             (when is-verbose
-#               (print (string/format "lib-name: %s" lib-name))
-#               (print (string/format "static-arch: %s" static-arch))
-#               (print (string/format "meta-name: %s" meta-name) )
-#               (print (string/format "static-o: %s" static-o))
-#               (print (string/format "libfinecurve-arch: %s" libfinecurve-arch))
-#               (print (string/format "static-lib: %s" static-lib))
-#               (print (string/format "static-finecurve-lib: %s" static-finecurve-lib))
-#               (print (string/format "static-final-o: %s" static-final-o))
-#               (print (string/format "static-meta-name: %s" static-meta-name)))
-#
-#             # Проверяем, что мы уже собрали файл (нужно для повторного билда)
-#
-#             (with-cwd static-path
-#               (sh/exec "ar" "x" static-arch))
-#
-#             (if (sh/exists? static-final-o)
-#
-#               (do
-#                 (when is-verbose
-#                   (print (string "Библиотека `" static-arch "` уже собрана.")))
-#                 (sh/rm static-o))
-#
-#               (do
-#                 (when is-verbose
-#                   (print (string "Пересобираем `" static-arch "`.")))
-#
-#                 # Все объектные файлы в библиотеке складываем в один.
-#                 # Объединяется результат сборки finecurve и native модуля
-#                 (sh/exec "ld" "-r" "-o" static-final-o
-#                          "--whole-archive"
-#                          static-lib static-brst-lib
-#                          "--no-whole-archive")
-#
-#                 # Удаляем существующий файла native модуля
-#                 (sh/rm static-lib)
-#
-#                 # Архивируем объединенный объектный файл в финальный архив
-#                 (sh/exec "ar" "rc" static-lib static-final-o)
-#
-#                 # Удаляем объектный файл
-#                 (sh/rm static-final-o)
-#
-#                 # Подчищаем meta
-#                 (def- meta (slurp static-meta-name))
-#
-#                 # Удаляем упоминание библиотеки _build/brst-build/libbrst.a
-#                 (def- meta-updated
-#                   (string/replace (string/format "\"%s\" " brst-build-lib)
-#                                   (string/format "# %s\n          " brst-build-lib)
-#                                   meta))
-#
-#                 # Записываем обновленную мету
-#                 (spit static-meta-name meta-updated))))))
-#
+(defn- repack-brst
+ []
+ (case (os/which)
+   :linux (do
 
-#(defn- build-brst
-#  []
-#  (build-brst-fn))
+            # brst___brst
+            (def- lib-name (string bundle-name "___" bundle-name))
 
-#(task "pre-build"  [] (build-brst))
+            # brst___brst.a
+            (def- static-arch (string lib-name ".a"))
+
+            # brst___brst.meta.janet
+            (def- meta-name (string lib-name ".meta.janet"))
+
+            # brst.o
+            (def- static-o (string bundle-name ".o"))
+
+            # libbrst.a
+            (def- libbrst-arch (jnt/gen-static-libname bundle-name))
+
+            # _build/develop/brst___brst.a
+            (def- static-lib
+              (path/join static-path static-arch))
+
+            # _build/libBeresta-build/src/libbrst.a
+            (def- static-brst-lib
+              (path/join (cmake-cache-line "libbrst_BINARY_DIR") "src" libbrst-arch))
+
+            # _build/release/brst.o
+            (def- static-final-o
+              (path/join static-path static-o))
+
+            # _build/release/brst___brst.meta.janet
+            (def- static-meta-name
+              (path/join static-path meta-name))
+
+            (when is-verbose
+              (print (string/format "static-path: %s" static-path))
+              (print (string/format "lib-name: %s" lib-name))
+              (print (string/format "static-arch: %s" static-arch))
+              (print (string/format "meta-name: %s" meta-name) )
+              (print (string/format "static-o: %s" static-o))
+              (print (string/format "libbrst-arch: %s" libbrst-arch))
+              (print (string/format "static-lib: %s" static-lib))
+              (print (string/format "static-brst-lib: %s" static-brst-lib))
+              (print (string/format "static-final-o: %s" static-final-o))
+              (print (string/format "static-meta-name: %s" static-meta-name)))
+
+            # Проверяем, что мы уже собрали файл (нужно для повторного билда)
+            (with-cwd static-path
+              (sh/exec "ar" "x" static-arch))
+
+            (if (sh/exists? static-final-o)
+
+	      # Мы распаковали архив, и в нем уже лежит brst.o.
+	      # Делать ничего не надо, подчищаем за собой и выходим
+              (do
+                (when is-verbose
+                  (print (string "Библиотека `" static-arch "` уже собрана.")))
+                (sh/rm static-o))
+
+	      # Распаковали архив, а там нет файла brst.o
+	      # Значит, что надо перепаковать архив
+              (do
+                (when is-verbose
+                  (print (string "Пересобираем `" static-arch "`."))
+		  (print (string/join
+			  @["ld" "-r" "-o" static-final-o
+			    "--whole-archive"
+			    static-lib static-brst-lib
+			    "--no-whole-archive"]
+			  " ")))
+
+                # Все объектные файлы в библиотеке складываем в один.
+                # Объединяется результат сборки и native модуля
+		# (т.е. складываем libbrst.a и brst.a в brst.o)
+                (sh/exec "ld" "-r" "-o" static-final-o
+                         "--whole-archive"
+                         static-lib static-brst-lib
+                         "--no-whole-archive")
+
+                # Удаляем существующий файла native модуля brst___brst.a
+                (sh/rm static-lib)
+
+                # Архивируем объединенный объектный файл в финальный архив
+		# (brst.o -> brst___brst.a)
+                (sh/exec "ar" "rc" static-lib static-final-o)
+
+                # Удаляем объектный файл (brst.o)
+                (sh/rm static-final-o)
+
+                # Подчищаем meta
+                (def- meta (slurp static-meta-name))
+
+                # Удаляем упоминание библиотеки _build/libBeresta-build/src/libbrst.a
+                (def- meta-updated
+                  (string/replace (string/format "\"%s\"" static-brst-lib)
+                                  (string/format "# %s\n          " static-brst-lib)
+                                  meta))
+
+                # Записываем обновленную мету
+                (spit static-meta-name meta-updated))))))
+
+(task "post-build"  [] (repack-brst))
