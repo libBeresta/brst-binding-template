@@ -39,6 +39,22 @@
 project(brst-binding-template)
 cmake_minimum_required(VERSION 3.20)
 
+find_program(
+    ECL_EXE
+  NAMES
+    ecl
+)
+
+set(ECL_BINARY)
+
+if (NOT EXISTS ${ECL_BINARY})
+  if ("${ECL_EXE}" STREQUAL "ECL_EXE-NOTFOUND")
+    message(FATAL_ERROR "`ecl` executable could not be found!")
+  else()
+    set(ECL_BINARY ${ECL_EXE})
+  endif()
+endif()
+
 set(LIBBRST_REL_DIR   "../libBeresta")
 set(LIBBRST_BUILD_DIR "libBeresta-build")
 set(LIBBRST_EXT_DIR   "ext/libBeresta")
@@ -94,7 +110,15 @@ add_custom_target(bundle)
 
 add_custom_command(
   TARGET binding
-  COMMAND echo "libBeresta language binding build target"
+  COMMAND ${ECL_BINARY}
+  ARGS --load ${LIBBRST_SOURCE_DIR}/gen/scripts/utils.lisp
+       --load ${CMAKE_SOURCE_DIR}/scripts/binding.lisp
+       --load ${CMAKE_SOURCE_DIR}/scripts/launcher.lisp --
+       ${LIBBRST_SOURCE_DIR}/gen/data/
+       ${CMAKE_SOURCE_DIR}/src/
+#  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+#          ${CMAKE_SOURCE_DIR}/templates/macro.lisp
+#          "${CMAKE_SOURCE_DIR}/src/macro.lisp"
 )
 
 add_custom_command(
