@@ -115,7 +115,6 @@ add_custom_command(
        --load ${CMAKE_SOURCE_DIR}/scripts/binding.lisp
        --load ${CMAKE_SOURCE_DIR}/scripts/launcher.lisp --
        ${LIBBRST_SOURCE_DIR}/gen/data/
-       ${CMAKE_SOURCE_DIR}/templates/
        ${CMAKE_SOURCE_DIR}/src/
 #  COMMAND ${CMAKE_COMMAND} -E copy_if_different
 #          ${CMAKE_SOURCE_DIR}/templates/macro.lisp
