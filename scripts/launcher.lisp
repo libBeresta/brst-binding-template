@@ -2,9 +2,9 @@
     (rem-args (ext:command-args) (ext:command-args))
 
   (if found--
-      (if (< (length args) 3)
+      (if (< (length args) 2)
           (princ "There must be parameters:
-  <generator data folder> <templates folder> <target folder>
+  <generator data folder> <target folder>
   set after '--'.
 ")
           (progn

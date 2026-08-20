@@ -29,6 +29,7 @@
     :BYTE          ("uinteger8"  . "integer")
     :UINT          ("uinteger"   . "integer")
     :INT8          ("integer8"   . "integer")
+    :INT           ("integer"    . "integer")
     :UINT8         ("uinteger8"  . "integer")
     :INT16         ("integer16"  . "integer")
     :UINT16        ("uinteger16" . "integer")
@@ -51,22 +52,17 @@
   (let* (;; Путь до файлов данных генератора
          (gen-dir (first args))
 
-         ;; Путь до файлов-шаблонов
-         (templates-dir (second args))
-
          ;; Папка для сохранения сгенерированных файлов
-         (target (third args))
+         (target (second args))
 
          ;; Список файлов данных генератора
          (data (directory
                 (merge-pathnames (pathname gen-dir)
                                  (pathname "*.lsp"))))
 
-         ;; Список файлов-шаблонов
-         (ecl-template  (merge-pathnames (pathname templates-dir)
-                                         (pathname "janet.dj")))
-         ;; Целевая папка
-         (target-path (pathname target)))
+         ;; Целевой файл
+         (target-path (merge-pathnames (pathname target)
+				       (pathname "binding.c"))))
 
     (let (;; Таблицы, заполняемые с помощью load-data
           (*enums-lsp*     (make-hash-table :test 'equalp))
@@ -120,6 +116,10 @@
 	 (with-output-to-string (output)
 	   (flet ((wr (fmt &rest values)
 		    (apply #'format (cons output (cons fmt values)))))
+	     (wr "  janet_def(env, \"mm\", janet_wrap_number(BRST_MM), \"Size in millimeters\");~%")
+	     (wr "  janet_def(env, \"in\", janet_wrap_number(BRST_IN), \"Size in inches\");~%")
+	     (wr "  janet_def(env, \"pi\", janet_wrap_number(BRST_PI), \"π value\");~%")
+
 	     (let ((enum-header ""))
        	       (dolist (e (sort
 			   (alexandria:hash-table-alist *enums-lsp*)
@@ -137,9 +137,14 @@
 		   (dolist (em elements)
 		     (let ((under (str:downcase (under (getf em :element))))
 			   (em-name (getf em :element))
-			   (en (str:replace-all "
+			   (en (str:replace-all
+				"\"" "\\\""
+				(str:replace-all
+				 "`" "'"
+				 (str:replace-all "\\" "\\\\"
+						  (str:replace-all "
 "
-						"\\n" (or (getf em :en) ""))))
+								   "\\n" (or (getf em :en) "")))))))
 		       (wr "  janet_def(env, \"~A\", janet_wrap_integer(BRST_~A), \"~A\");~%" under em-name en))))))))
 
 	 function-list
@@ -164,9 +169,14 @@
 			   (data (cddr f))
 			   (params (getf data :params))
 			   (result (getf data :result))
-			   (en (str:replace-all "
+			   (en (str:replace-all
+				"\"" "\\\""
+				(str:replace-all
+				 "`" "'"
+				 (str:replace-all "\\" "\\\\"
+						  (str:replace-all "
 "
-						"\\n" (or (getf data :en) "")))
+								   "\\n" (or (getf data :en) ""))))))
 			   (return-type (getf result :type))
 			   (under (str:downcase (under function)))
 			   (param-names (if (zerop (length params))
@@ -213,7 +223,7 @@
 						     (t type)))))
 			      (if (string= "CSTR" type)
 				  (wr "  BRST_CSTR ~A = (BRST_CSTR)janet_getstring(argv, ~D);~%" name i)
-				  (wr "  BRST_~A ~A = (BRST_~A)janet_get_~A(argv, ~D);~%"
+				  (wr "  BRST_~A ~A = (BRST_~A)janet_get~A(argv, ~D);~%"
 				      type
 				      name
 				      type
@@ -242,7 +252,7 @@
 			    (if (string= "CSTR" return-type)
 				(progn
 				  (wr "  BRST_CSTR ret = BRST_~A(~A);~%" function param-names)
-				  (wr "  return janet_cstringv(ret);"))
+				  (wr "  return janet_cstringv(ret);~%"))
 				(progn
 				  (wr "  BRST_~A ret = BRST_~A(~A);~%" return-type function param-names)
 				  (wr "  return janet_wrap_~A(ret);~%" ret-type)))))
@@ -267,5 +277,7 @@
 	     (princ page-sizes res)
 	     (wr "~%  janet_cfuns(env, \"brst\", cfuns);~%")
 	     (wr "}")))
-	 "janet.c")
+	 target-path
+	 :if-exists :supersede
+	 :if-does-not-exist :create)
 	))))
