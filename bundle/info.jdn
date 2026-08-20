@@ -1,0 +1,7 @@
+@{:author "Dmitry Solomennikov <dmitry@libberesta.ru>"
+  :description "Language bindings for the `libBeresta` library for the Janet language."
+  :license "MIT"
+  :jpm-dependencies @["spork"
+                      {:url "https://github.com/rwtolbert/janet-native-tools.git" :tag "0.2.0"}]
+  :name "brst"
+  :version "1.0.0"}
